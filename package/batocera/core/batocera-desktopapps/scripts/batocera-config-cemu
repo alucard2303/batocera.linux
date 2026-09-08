@@ -1,0 +1,10 @@
+#!/bin/bash
+
+if test -z "${DISPLAY}"
+then
+    export DISPLAY=$(getLocalXDisplay)
+fi
+
+batocera-launch -system wiiu -rom config
+
+exit 0

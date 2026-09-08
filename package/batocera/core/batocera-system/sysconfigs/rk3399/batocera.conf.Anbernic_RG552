@@ -1,0 +1,10 @@
+# Anbernic RG552 default values
+
+# the button can be pressed by mistake
+system.shutdowndelay=1
+
+# default drm rotation
+display.rotate.DSI=3
+
+# Wayland LabWC
+display.rotate.DSI-1=1

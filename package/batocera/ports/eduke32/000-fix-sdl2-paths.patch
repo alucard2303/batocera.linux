@@ -1,0 +1,24 @@
+diff --git a/source/imgui/src/imgui_impl_sdl2.cpp b/source/imgui/src/imgui_impl_sdl2.cpp
+index 4fb9c4d..ca81c53 100644
+--- a/source/imgui/src/imgui_impl_sdl2.cpp
++++ b/source/imgui/src/imgui_impl_sdl2.cpp
+@@ -114,8 +114,8 @@
+ #endif
+ 
+ // SDL
+-#include <SDL.h>
+-#include <SDL_syswm.h>
++#include <SDL2/SDL.h>
++#include <SDL2/SDL_syswm.h>
+ #include <stdio.h>              // for snprintf()
+ #ifdef __APPLE__
+ #include <TargetConditionals.h>
+@@ -134,7 +134,7 @@
+ #define SDL_HAS_VULKAN                      SDL_VERSION_ATLEAST(2,0,6)
+ #define SDL_HAS_OPEN_URL                    SDL_VERSION_ATLEAST(2,0,14)
+ #if SDL_HAS_VULKAN
+-#include <SDL_vulkan.h>
++#include <SDL2/SDL_vulkan.h>
+ #endif
+ 
+ // SDL Data

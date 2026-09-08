@@ -1,0 +1,76 @@
+################################################################################
+#
+# rpcs3
+#
+################################################################################
+# Version: Commits on Aug 23, 2026
+RPCS3_VERSION = 3aac7d776dfe91596dccd7b3c6fa2419b5044611
+RPCS3_SITE = https://github.com/RPCS3/rpcs3.git
+RPCS3_SITE_METHOD=git
+RPCS3_GIT_SUBMODULES=YES
+RPCS3_LICENSE = GPLv2
+RPCS3_EMULATOR_INFO = rpcs3.emulator.yml
+RPCS3_SUPPORTS_IN_SOURCE_BUILD = NO
+
+RPCS3_DEPENDENCIES += alsa-lib faudio ffmpeg flatbuffers host-clang host-lld
+RPCS3_DEPENDENCIES += libcurl libevdev libglew libglu libpng libusb libxml2 llvm
+RPCS3_DEPENDENCIES += mesa3d ncurses openal opencv4 qt6base qt6declarative
+RPCS3_DEPENDENCIES += qt6multimedia qt6svg rtmpdump sdl3 wolfssl
+
+RPCS3_CMAKE_BACKEND = ninja
+# Use clang for performance
+RPCS3_CONF_OPTS += -DCMAKE_C_COMPILER=$(HOST_DIR)/bin/clang
+RPCS3_CONF_OPTS += -DCMAKE_CXX_COMPILER=$(HOST_DIR)/bin/clang++
+# Hide unused arguments
+RPCS3_CONF_OPTS += -DCMAKE_C_FLAGS="$(TARGET_CFLAGS) -Qunused-arguments"
+RPCS3_CONF_OPTS += -DCMAKE_CXX_FLAGS="$(TARGET_CXXFLAGS) -Qunused-arguments"
+# Use the LLD linker
+RPCS3_CONF_OPTS += -DCMAKE_EXE_LINKER_FLAGS="$(TARGET_LDFLAGS) -fuse-ld=lld -lstdc++"
+RPCS3_CONF_OPTS += -DCMAKE_MODULE_LINKER_FLAGS="$(TARGET_LDFLAGS) -fuse-ld=lld"
+RPCS3_CONF_OPTS += -DCMAKE_SHARED_LINKER_FLAGS="$(TARGET_LDFLAGS) -fuse-ld=lld"
+
+RPCS3_CONF_OPTS += -DCMAKE_BUILD_TYPE=Release
+RPCS3_CONF_OPTS += -DBUILD_SHARED_LIBS=OFF
+RPCS3_CONF_OPTS += -DCMAKE_INSTALL_PREFIX=/usr
+RPCS3_CONF_OPTS += -DCMAKE_CROSSCOMPILING=ON
+RPCS3_CONF_OPTS += -DUSE_NATIVE_INSTRUCTIONS=OFF
+RPCS3_CONF_OPTS += -DUSE_PRECOMPILED_HEADERS=OFF
+RPCS3_CONF_OPTS += -DUSE_SYSTEM_CURL=ON
+RPCS3_CONF_OPTS += -DUSE_SDL=ON
+RPCS3_CONF_OPTS += -DUSE_SYSTEM_SDL=ON
+RPCS3_CONF_OPTS += -DUSE_SYSTEM_FFMPEG=ON
+RPCS3_CONF_OPTS += -DUSE_SYSTEM_OPENCV=ON
+RPCS3_CONF_OPTS += -DUSE_SYSTEM_LIBUSB=ON
+RPCS3_CONF_OPTS += -DUSE_LIBEVDEV=ON
+RPCS3_CONF_OPTS += -DUSE_FAUDIO=ON
+RPCS3_CONF_OPTS += -DUSE_DISCORD_RPC=OFF
+RPCS3_CONF_OPTS += -DOpenGL_GL_PREFERENCE=LEGACY
+RPCS3_CONF_OPTS += -DBUILD_LLVM=OFF
+RPCS3_CONF_OPTS += -DSTATIC_LINK_LLVM=OFF
+RPCS3_CONF_OPTS += -DLLVM_DIR=$(STAGING_DIR)/usr/lib/cmake/llvm/
+RPCS3_CONF_OPTS += -DBUILD_RPCS3_TESTS=OFF
+RPCS3_CONF_OPTS += -DRUN_RPCS3_TESTS=OFF
+RPCS3_CONF_OPTS += -DUSE_LTO=OFF
+
+ifeq ($(BR2_PACKAGE_BATOCERA_VULKAN),y)
+    RPCS3_DEPENDENCIES += vulkan-headers vulkan-loader
+    RPCS3_CONF_OPTS += -DUSE_VULKAN=ON
+else
+    RPCS3_CONF_OPTS += -DUSE_VULKAN=OFF
+endif
+
+define RPCS3_INSTALL_RPCS3_EXIT
+	$(INSTALL) -D -m 0755 $(RPCS3_PKGDIR)/rpcs3-exit $(TARGET_DIR)/usr/bin/rpcs3-exit
+endef
+
+RPCS3_POST_INSTALL_TARGET_HOOKS += RPCS3_INSTALL_RPCS3_EXIT
+
+define RPCS3_INSTALL_EVMAPY
+	mkdir -p $(TARGET_DIR)/usr/share/evmapy
+	$(INSTALL) -D -m 0644 $(RPCS3_PKGDIR)/*.keys $(TARGET_DIR)/usr/share/evmapy/
+endef
+
+RPCS3_POST_INSTALL_TARGET_HOOKS += RPCS3_INSTALL_EVMAPY
+
+$(eval $(cmake-package))
+$(eval $(emulator-info-package))

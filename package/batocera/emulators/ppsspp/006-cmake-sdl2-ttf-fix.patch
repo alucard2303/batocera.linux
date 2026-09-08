@@ -1,0 +1,12 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1531,7 +1531,7 @@ else()
+ 		message(WARNING "Found SDL2_ttf <2.0.18 - this is too old, falling back to atlas")
+ 	endif()
+ 	if(SDL2_ttf_FOUND)
+-		list(APPEND nativeExtraLibs SDL2_ttf::SDL2_ttf)
++		list(APPEND nativeExtraLibs SDL2_ttf)
+ 	elseif(SDL2_ttf_PKGCONFIG_FOUND)
+ 		list(APPEND nativeExtraLibs PkgConfig::SDL2_ttf_PKGCONFIG)
+ 	endif()

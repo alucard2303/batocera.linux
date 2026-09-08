@@ -1,0 +1,35 @@
+diff --git a/SDL/SDLJoystick.cpp b/SDL/SDLJoystick.cpp
+index 2f6b4717..4feccfc1 100644
+--- a/SDL/SDLJoystick.cpp
++++ b/SDL/SDLJoystick.cpp
+@@ -24,7 +24,7 @@ SDLJoystick::SDLJoystick(bool init_SDL ) : registeredAsEventHandler(false) {
+ 		SDL_Init(SDL_INIT_JOYSTICK | SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER);
+ 	}
+
+-	const char *dbPath = "gamecontrollerdb.txt";
++	const char *dbPath = "/userdata/system/configs/ppsspp/gamecontrollerdb.txt";
+ 	INFO_LOG(Log::System, "loading control pad mappings from %s:", dbPath);
+
+ 	size_t size;
+diff --git a/UI/NativeApp.cpp b/UI/NativeApp.cpp
+index e1f858c2..418c7742 100644
+--- a/UI/NativeApp.cpp
++++ b/UI/NativeApp.cpp
+@@ -433,7 +433,7 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
+ 	g_VFS.Register("", new DirectoryReader(File::GetExeDirectory()));
+ 	g_VFS.Register("", new DirectoryReader(Path("/usr/local/share/ppsspp/assets")));
+ 	g_VFS.Register("", new DirectoryReader(Path("/usr/local/share/games/ppsspp/assets")));
+-	g_VFS.Register("", new DirectoryReader(Path("/usr/share/ppsspp/assets")));
++	g_VFS.Register("", new DirectoryReader(Path("/usr/share/ppsspp/PPSSPP")));
+ 	g_VFS.Register("", new DirectoryReader(Path("/usr/share/games/ppsspp/assets")));
+ #endif
+
+@@ -512,7 +512,7 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
+ 	else // Just in case
+ 		config = "./config";
+
+-	g_Config.memStickDirectory = Path(config) / "ppsspp";
++	g_Config.memStickDirectory = Path("/userdata/saves/psp/");
+ 	g_Config.flash0Directory = File::GetExeDirectory() / "assets/flash0";
+ 	if (getenv("HOME") != nullptr) {
+ 		g_Config.defaultCurrentDirectory = Path(getenv("HOME"));

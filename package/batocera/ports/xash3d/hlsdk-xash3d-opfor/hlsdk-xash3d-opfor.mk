@@ -1,0 +1,33 @@
+################################################################################
+#
+# hlsdk-xash3d-opfor
+#
+################################################################################
+
+# "opforfixed" branch
+# Version: Commits on Jun 14, 2026
+HLSDK_XASH3D_OPFOR_VERSION = dbb72426d98559d458d4ebfda3db020072f859c6
+HLSDK_XASH3D_OPFOR_BRANCH = opforfixed
+HLSDK_XASH3D_OPFOR_SITE = $(call github,FWGS,hlsdk-portable,$(HLSDK_XASH3D_OPFOR_VERSION))
+HLSDK_XASH3D_OPFOR_DEPENDENCIES = sdl2 sdl2_mixer sdl2_image sdl2_ttf libsodium
+HLSDK_XASH3D_OPFOR_LICENSE = Half Life 1 SDK LICENSE
+HLSDK_XASH3D_OPFOR_LICENSE_FILES = LICENSE
+
+HLSDK_XASH3D_OPFOR_CONF_OPTS += -DGOLDSOURCE_SUPPORT=1
+HLSDK_XASH3D_OPFOR_CONF_OPTS += -DSERVER_LIBRARY_NAME=opfor
+HLSDK_XASH3D_OPFOR_CONF_OPTS += -DGAMEDIR=gearbox
+HLSDK_XASH3D_OPFOR_CONF_OPTS += -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+# GCC 15 / C23 compatibility fix
+HLSDK_XASH3D_OPFOR_CONF_OPTS += -DCMAKE_C_FLAGS="$(TARGET_CFLAGS) -std=gnu17"
+
+ifeq ($(BR2_ARCH_IS_64),y)
+HLSDK_XASH3D_OPFOR_CONF_OPTS += -D64BIT=ON
+endif
+
+define HLSDK_XASH3D_OPFOR_INSTALL_TARGET_CMDS
+	$(INSTALL) -m 0755 -t $(TARGET_DIR)/usr/lib/xash3d/hlsdk/opfor/cl_dlls/ -D $(@D)/cl_dll/*.so
+	$(INSTALL) -m 0755 -t $(TARGET_DIR)/usr/lib/xash3d/hlsdk/opfor/dlls/ -D $(@D)/dlls/*.so
+endef
+
+$(eval $(cmake-package))

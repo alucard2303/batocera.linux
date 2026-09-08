@@ -1,0 +1,157 @@
+shared_features:
+  - powermode
+  - tdp
+  - videomode
+  - bezel
+  - bezel_stretch
+  - hud
+  - hud_corner
+  - bezel.tattoo
+  - bezel.tattoo_corner
+  - bezel.tattoo_file
+  - bezel.resize_tattoo
+custom_features:
+  azahar_screen_layout:
+    prompt: SCREEN LAYOUT
+    description: Arrange the dual screen layout. Separate windows can be changed with Hotkey+R2.
+    choices:
+      Bottom/Top: 0-true
+      Top Only: 1-false
+      Bottom Only: 1-true
+      Large Top: 2-false
+      Large Bottom: 2-true
+      Left/Right: 3-false
+      Right/Left: 3-true
+      Separate Windows: 4-false
+      Hybrid Screen Top: 5-false
+      Hybrid Screen Bottom: 5-true
+  azahar_large_screen_proportion:
+    prompt: SCREEN PROPORTION
+    description: Determines the proportion of the larger screen relative to the smaller one.
+    choices:
+        "2":            2
+        "3":            3
+        "4 (Default)":  4
+        "5":            5
+        "6":            6
+  azahar_resolution_factor:
+    submenu: GRAPHICS
+    prompt: RENDERING RESOLUTION
+    description: Enhancement. Increase the rendering resolution. Makes 3D objects clearer.
+    choices:
+      1x (400x240): 1
+      2x (800x480): 2
+      3x (1200x720): 3
+      4x (1600x960): 4
+      5x (2000x1200): 5
+      6x (2400x1440): 6
+      7x (2800x1680): 7
+      8x (3200x1920): 8
+      9x (3600x2160): 9
+      10x (4000x2400): 10
+  azahar_texture_filter:
+    submenu: GRAPHICS
+    prompt: TEXTURE FILTER
+    description: Enhance low-resolution textures using scaling algorithms.
+    choices:
+      None (Default): 0
+      Anime4K: 1
+      Bicubic: 2
+      ScaleForce: 3
+      xBRZ: 4
+  azahar_use_vsync:
+    submenu: GRAPHICS
+    prompt: VSYNC
+    description: Synchronize framerate with display refresh rate.
+    choices:
+      'Off': 0
+      'On': 1
+  azahar_use_hw_shader:
+    submenu: GRAPHICS
+    prompt: HARDWARE SHADER
+    description: Helps improve performance and requires a powerful GPU. May cause some games not launch when enabled.
+    choices:
+      Off (Default): 0
+      'On': 1
+  azahar_accurate_multiplication:
+    submenu: GRAPHICS
+    prompt: ACCURATE MULTIPLICATION
+    description: Fixes rendering glitches in games like Luigi's Mansion and Pokemon, but costs performance.
+    choices:
+      'Off': 0
+      'On': 1
+  azahar_use_shader_jit:
+    submenu: GRAPHICS
+    prompt: SHADER JIT
+    description: Use JIT compiler for shader emulation.
+    choices:
+      'Off': 0
+      'On': 1
+  azahar_async_shader_compilation:
+    submenu: GRAPHICS
+    prompt: ASYNC SHADER COMPILATION
+    description: Compile shaders in background threads to avoid stuttering.
+    choices:
+      'Off': 0
+      'On': 1
+  azahar_async_presentation:
+    submenu: GRAPHICS
+    prompt: ASYNC PRESENTATION
+    description: Separate display presentation from emulation threads (best with Vulkan).
+    choices:
+      'Off': 0
+      'On': 1
+  azahar_use_disk_shader_cache:
+    submenu: GRAPHICS
+    prompt: DISK SHADER CACHE
+    description: Cache compiled shaders to storage to eliminate future stutter.
+    choices:
+      'Off': 0
+      'On (Default)': 1
+  azahar_custom_textures:
+    submenu: GRAPHICS
+    prompt: LOAD CUSTOM TEXTURES
+    choices:
+      'Off': 0
+      'On': 1-normal
+      Preload: 1-preload
+  azahar_audio_stretching:
+    submenu: AUDIO
+    prompt: AUDIO TIME STRETCHING
+    description: Dynamically timestretch audio to prevent crackling on frame drops.
+    choices:
+      'Off': 0
+      'On (Default)': 1
+  azahar_cpu_clock:
+    group: ADVANCED OPTIONS
+    prompt: CPU CLOCK PERCENTAGE
+    description: Overclock emulated 3DS CPU to improve framerates or run 60 FPS mods.
+    choices:
+      50%: 50
+      100% (Default): 100
+      150%: 150
+      200%: 200
+      300%: 300
+      400%: 400
+  azahar_is_new_3ds:
+    group: ADVANCED OPTIONS
+    prompt: NEW 3DS MODE
+    description: Emulate New 3DS processor speed and additional controls (C-stick, ZL/ZR).
+    choices:
+      'Off': 0
+      'On': 1
+systems:
+  - 3ds
+
+labwc:
+  window_rules:
+    - identifier: azahar
+      actions:
+        - name: MoveToOutput
+          output: primary
+    - identifier: azahar
+      title: "*Secondary Window*"
+      actions:
+        - name: MoveToOutput
+          output: secondary|primary
+        - name: ToggleFullscreen

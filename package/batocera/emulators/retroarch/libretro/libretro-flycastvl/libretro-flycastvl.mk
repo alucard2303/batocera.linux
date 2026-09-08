@@ -1,0 +1,63 @@
+################################################################################
+#
+# libretro-flycastvl
+#
+################################################################################
+# version.: Commits on Jul 06, 2026
+LIBRETRO_FLYCASTVL_VERSION = 45bd2f4e59708a7c16a5bb1cb90a94d1b39e330d
+LIBRETRO_FLYCASTVL_SITE = $(call github,libretro,flycast,$(LIBRETRO_FLYCASTVL_VERSION))
+LIBRETRO_FLYCASTVL_LICENSE = GPLv2
+LIBRETRO_FLYCASTVL_DEPENDENCIES += retroarch
+LIBRETRO_FLYCASTVL_EMULATOR_INFO = flycastvl.libretro.core.yml
+
+LIBRETRO_FLYCASTVL_PLATFORM = $(LIBRETRO_PLATFORM)
+LIBRETRO_FLYCASTVL_EXTRA_ARGS = HAVE_OPENMP=1
+
+ifeq ($(BR2_PACKAGE_BATOCERA_TARGET_BCM2711),y)
+LIBRETRO_FLYCASTVL_PLATFORM = rpi4_64
+LIBRETRO_FLYCASTVL_EXTRA_ARGS += FORCE_GLES=1 ARCH=arm64 LDFLAGS=-lrt
+
+else ifeq ($(BR2_PACKAGE_BATOCERA_TARGET_BCM2712),y)
+LIBRETRO_FLYCASTVL_PLATFORM = rpi5_64
+LIBRETRO_FLYCASTVL_EXTRA_ARGS += FORCE_GLES=1 ARCH=arm64 LDFLAGS=-lrt
+
+else ifeq ($(BR2_PACKAGE_BATOCERA_TARGET_BCM2837),y)
+LIBRETRO_FLYCASTVL_PLATFORM = rpi3_64
+LIBRETRO_FLYCASTVL_EXTRA_ARGS += FORCE_GLES=1 ARCH=arm64 LDFLAGS=-lrt
+
+else ifeq ($(BR2_PACKAGE_BATOCERA_TARGET_BCM2836),y)
+LIBRETRO_FLYCASTVL_PLATFORM = rpi2
+LIBRETRO_FLYCASTVL_EXTRA_ARGS += FORCE_GLES=1 ARCH=arm LDFLAGS=-lrt
+
+else ifeq ($(BR2_PACKAGE_BATOCERA_TARGET_RK3326),y)
+LIBRETRO_FLYCASTVL_PLATFORM = RK3326
+LIBRETRO_FLYCASTVL_EXTRA_ARGS += FORCE_GLES=1 ARCH=arm64 LDFLAGS=-lrt
+
+else ifeq ($(BR2_PACKAGE_BATOCERA_TARGET_H3),y)
+LIBRETRO_FLYCASTVL_PLATFORM = sun8i
+LIBRETRO_FLYCASTVL_EXTRA_ARGS += FORCE_GLES=1 ARCH=arm LDFLAGS=-lrt
+
+else ifeq ($(BR2_PACKAGE_BATOCERA_TARGET_H5)$(BR2_PACKAGE_BATOCERA_TARGET_H6),y)
+LIBRETRO_FLYCASTVL_PLATFORM = arm64
+LIBRETRO_FLYCASTVL_EXTRA_ARGS += FORCE_GLES=1 ARCH=arm64 LDFLAGS=-lrt
+endif
+
+define LIBRETRO_FLYCASTVL_BUILD_CMDS
+    $(TARGET_CONFIGURE_OPTS) $(MAKE) \
+        CC="$(TARGET_CC) -Wno-error=implicit-function-declaration" \
+        CXX="$(TARGET_CXX) -Wno-error=implicit-function-declaration" \
+        -C $(@D)/ -f Makefile \
+        platform="$(LIBRETRO_FLYCASTVL_PLATFORM)" $(LIBRETRO_FLYCASTVL_EXTRA_ARGS) \
+        GIT_VERSION="-$(shell echo $(LIBRETRO_FLYCASTVL_VERSION) | cut -c 1-7)"
+endef
+
+define LIBRETRO_FLYCASTVL_INSTALL_TARGET_CMDS
+	$(INSTALL) -D $(@D)/flycast_libretro.so \
+		$(TARGET_DIR)/usr/lib/libretro/flycastvl_libretro.so
+	mkdir -p $(TARGET_DIR)/usr/share/libretro/info
+	cp $(LIBRETRO_FLYCASTVL_PKGDIR)/flycastvl_libretro.info \
+		$(TARGET_DIR)/usr/share/libretro/info/
+endef
+
+$(eval $(generic-package))
+$(eval $(emulator-info-package))

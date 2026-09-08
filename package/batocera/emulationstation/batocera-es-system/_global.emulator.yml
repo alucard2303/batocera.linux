@@ -1,0 +1,57 @@
+shared_features:
+  - powermode
+  - batterymode
+  - tdp
+  - videomode
+  - ratio
+  - shaderset
+  - smooth
+  - integerscale
+  - bezel
+  - bezel_stretch
+  - hud
+  - hud_corner
+  - bezel.tattoo
+  - bezel.tattoo_corner
+  - bezel.tattoo_file
+  - bezel.resize_tattoo
+  - ai_service_enabled
+  - ai_target_lang
+  - ai_service_url
+  - ai_service_pause
+  - rewind
+  - toggle_fast_forward
+  - runahead
+  - preemptiveframes
+  - secondinstance
+  - video_frame_delay_auto
+  - vrr_runloop_enable
+  - video_threaded
+  - rumble_gain
+
+labwc:
+  window_rules:
+    - identifier: emulationstation
+      actions:
+        - name: FocusOutput
+          output: primary
+        - name: MoveToOutput
+          output: primary
+    - identifier: batocera-backglass-window
+      actions:
+        - name: MoveToOutput
+          output: secondary
+    - title: Batocera Control Center
+      actions:
+        - name: MoveToOutput
+          output: secondary
+    - identifier: "batocera-flash-screen*"
+      actions:
+        - name: MoveToOutput
+          output: primary
+    - identifier: "*"
+      actions:
+        - name: MoveToOutput
+          output: primary
+        - name: FocusOutput
+          output: primary

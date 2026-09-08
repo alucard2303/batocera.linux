@@ -1,0 +1,70 @@
+#!/bin/sh
+
+NAME="lircd"
+DAEMON="/usr/sbin/lircd"
+PIDFILE="/var/run/lirc.pid"
+LIRC_RUN_DIR="/var/run/lirc"
+
+DRIVER="default"
+DEVICE="/dev/lirc0"
+OUTPUT="/var/run/lirc/lircd"
+CONFIG="/userdata/system/.config/lirc/lircd.conf"
+
+DAEMON_PIDFILE="/var/run/lirc/lircd-lirc0.pid"
+
+DAEMON_ARGS="-n --driver=$DRIVER --device=$DEVICE --output=$OUTPUT --pidfile=$DAEMON_PIDFILE $CONFIG"
+
+if [ ! -x "$DAEMON" ]; then
+    echo "$DAEMON not found, skipping $NAME."
+    exit 0
+fi
+
+start() {
+    printf "Starting %s: " "$NAME"   
+    mkdir -p "$LIRC_RUN_DIR"   
+    start-stop-daemon -S -b -q -m -p "$PIDFILE" --exec "$DAEMON" -- $DAEMON_ARGS
+    if [ $? -eq 0 ]; then
+        echo "OK"
+    else
+        echo "FAIL"
+    fi
+}
+
+stop() {
+    printf "Stopping %s: " "$NAME"
+    start-stop-daemon -K -q -p "$PIDFILE"
+    [ -f "$PIDFILE" ] && rm -f "$PIDFILE"
+    echo "OK"
+}
+
+status() {
+    if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+        echo "$NAME is running (pid $(cat "$PIDFILE"))."
+    else
+        echo "$NAME is not running."
+        exit 3
+    fi
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        stop
+        sleep 1
+        start
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|reload|status}"
+        exit 1
+        ;;
+esac
+
+exit $?

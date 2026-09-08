@@ -1,0 +1,377 @@
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from collections import defaultdict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, NotRequired, cast
+from typing_extensions import TypedDict
+
+from batocera_common.yaml import safe_load_yaml
+from batocera_es_system.es_systems import load_es_systems
+from batocera_es_system.registry import EmulatorInfo, EmulatorsBySystemMapping, EmulatorsMetadataMapping, Registry
+from batocera_es_system.shared import (
+    MISSING,
+    Defaults,
+    SystemDict,
+    SystemsData,
+    get_deep_value,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+
+class _CoreExplanationsDict(TypedDict):
+    flags: NotRequired[list[str]]
+    explanation: NotRequired[str]
+
+
+type _EmulatorExplanationsDict = dict[str, _CoreExplanationsDict]
+type _SystemExplanationsDict = dict[str, _EmulatorExplanationsDict]
+type _ArchExplanationsDict = dict[str, _SystemExplanationsDict]
+type _ExplanationsDict = dict[str, _ArchExplanationsDict]
+
+
+class _ResultCoreDict(TypedDict):
+    enabled: bool
+    explanation: str | None
+    flags: NotRequired[list[str]]
+    default: NotRequired[bool]
+
+
+class _EmulatorsResultDict(TypedDict):
+    name: str
+    nb_variants: int
+    nb_all_variants: int
+    nb_explanations: int
+    nb_all_explanations: int
+    emulators: dict[str, dict[str, _ResultCoreDict]]
+    red_flag: NotRequired[bool]
+
+
+class _SortedListEncoder(json.JSONEncoder):
+    def encode(self, o: Any) -> str:
+        def sort_lists(item: Any) -> Any:
+            if isinstance(item, list):
+                return sorted(sort_lists(i) for i in cast('list[Any]', item))
+            if isinstance(item, dict):
+                return {k: sort_lists(v) for k, v in cast('dict[str, Any]', item.items())}
+            return item
+
+        return super().encode(sort_lists(o))
+
+
+@dataclass(slots=True)
+class _TargetMissingInfo:
+    files: list[Path] = field(default_factory=cast('type[list[Path]]', list))
+    defaults: dict[str, tuple[str | None, str | None]] = field(
+        default_factory=cast('type[dict[str, tuple[str | None, str | None]]]', dict)
+    )
+
+    def __bool__(self) -> bool:
+        return bool(self.files or self.defaults)
+
+    def add_file(self, missing_file: Path, /) -> None:
+        self.files.append(missing_file)
+
+    def add_default(self, system_name: str, default_emulator: str | None, default_core: str | None, /) -> None:
+        self.defaults[system_name] = (default_emulator, default_core)
+
+
+@dataclass(slots=True)
+class _MissingReport:
+    target_info: dict[str, _TargetMissingInfo] = field(
+        default_factory=lambda: cast('dict[str, _TargetMissingInfo]', defaultdict(_TargetMissingInfo))
+    )
+
+    def get_target_info(self, target: str, /) -> _TargetMissingInfo:
+        return self.target_info[target]
+
+    def add_missing(self, target: str, missing_file: Path, /) -> None:
+        self.target_info[target].add_file(missing_file)
+
+    def add_missing_default(
+        self, target: str, system_name: str, default_emulator: str | None, default_core: str | None, /
+    ) -> None:
+        self.target_info[target].add_default(system_name, default_emulator, default_core)
+
+    def print_missing(self, /) -> bool:
+        if not self.target_info:
+            return False
+
+        has_missing = False
+        missing_by_file: dict[Path, set[str]] = defaultdict(set)
+
+        for target, target_info in self.target_info.items():
+            for missing_file in target_info.files:
+                missing_by_file[missing_file].add(target)
+
+            if target_info.defaults:
+                has_missing = True
+
+                for system_name, (default_emulator, default_core) in target_info.defaults.items():
+                    print(
+                        f'warning: default core ({default_emulator}/{default_core}) not enabled for {target}/{system_name}',
+                        file=sys.stderr,
+                    )
+
+        if missing_by_file:
+            has_missing = True
+
+            print('warning: ignored missing emulator-info files (stale/orphaned package references):', file=sys.stderr)
+            for missing_file, targets in sorted(missing_by_file.items()):
+                print(f'  {missing_file}: {", ".join(sorted(targets))}', file=sys.stderr)
+
+        return has_missing
+
+
+def _has_red_flag(nb_variants: int, nb_explanations: int, nb_all_explanations: int, /) -> bool:
+    if nb_variants == 0 and nb_all_explanations == 0:
+        return True
+    if nb_variants == 0 and nb_all_explanations >= 1:
+        return False
+    if nb_variants == 1:
+        return False
+    return nb_variants != nb_explanations
+
+
+def _get_boards_from_config(config_file: Path, /) -> list[str]:
+    with config_file.open() as fp:
+        for line in fp:
+            m = re.search('^([^ ]+)=[ ]*(.*)[ ]*$', line)
+            if m and m.group(1) == 'BR2_TARGET_BATOCERA_IMAGES':
+                dirs = m.group(2)[1:-1].split(' ')
+                return [Path(dir).name for dir in dirs]
+
+    return []
+
+
+def _generate_target_system_report(
+    target: str,
+    system_name: str,
+    system_data: SystemDict,
+    explanations: _ExplanationsDict,
+    defaults: Defaults,
+    emulators_metadata: EmulatorsMetadataMapping,
+    all_system_emulators: Mapping[str, Mapping[str, EmulatorInfo]],
+    /,
+    *,
+    missing_info: _TargetMissingInfo,
+) -> _EmulatorsResultDict | None:
+    nb_variants = 0
+    nb_all_variants = 0
+    nb_explanations = 0
+    nb_all_explanations = 0
+    default_found = False
+
+    emulators_result: dict[str, dict[str, _ResultCoreDict]] = {}
+
+    for emulator_name, emulators_by_core in sorted(all_system_emulators.items()):
+        cores_report: dict[str, _ResultCoreDict] = {}
+        cores_metadata = emulators_metadata.get(emulator_name, {})
+
+        for core_name, _ in sorted(emulators_by_core.items()):
+            core_metadata = cores_metadata.get(core_name)
+            nb_all_variants += 1
+
+            arch_explanation = get_deep_value(
+                explanations, target, system_name, emulator_name, core_name, 'explanation'
+            )
+            default_explanation = get_deep_value(
+                explanations, 'default', system_name, emulator_name, core_name, 'explanation'
+            )
+
+            explanation = (
+                arch_explanation
+                if arch_explanation is not MISSING
+                else (default_explanation if default_explanation is not MISSING else None)
+            )
+
+            core_report = cores_report[core_name] = {
+                'enabled': bool(core_metadata),
+                'explanation': explanation,
+            }
+
+            if core_metadata:
+                nb_variants += 1
+
+                if explanation is not None:
+                    nb_explanations += 1
+
+                flags = []
+                if (
+                    arch_flags := get_deep_value(explanations, target, system_name, emulator_name, core_name, 'flags')
+                ) is not MISSING:
+                    flags += arch_flags
+                if (
+                    default_flags := get_deep_value(
+                        explanations, 'default', system_name, emulator_name, core_name, 'flags'
+                    )
+                ) is not MISSING:
+                    flags += default_flags
+
+                core_report['flags'] = flags
+
+                if core_metadata['default']:
+                    default_found = True
+
+                core_report['default'] = core_metadata['default']
+            elif explanation is not None:
+                nb_all_explanations += 1
+
+        emulators_result[emulator_name] = cores_report
+
+    if not emulators_result:
+        return None
+
+    if nb_variants > 0 and not default_found:
+        default_emulator = defaults.get(system_name, 'emulator')
+        default_core = defaults.get(system_name, 'core')
+
+        missing_info.add_default(system_name, default_emulator, default_core)
+
+    return {
+        'name': system_data['name'],
+        'nb_variants': nb_variants,
+        'nb_all_variants': nb_all_variants,
+        'nb_explanations': nb_explanations,
+        'nb_all_explanations': nb_all_explanations,
+        'emulators': emulators_result,
+        'red_flag': _has_red_flag(nb_variants, nb_explanations, nb_all_explanations),
+    }
+
+
+def _generate_target_report(
+    target_dir: Path,
+    es_systems_data: SystemsData,
+    explanations: _ExplanationsDict,
+    defaults_dir: Path,
+    all_emulators_by_system: EmulatorsBySystemMapping,
+    /,
+    *,
+    missing_report: _MissingReport,
+    buildroot_mapping: tuple[Path, Path] | None = None,
+) -> dict[str, _EmulatorsResultDict]:
+    target = target_dir.name
+    missing_info = missing_report.get_target_info(target)
+
+    registry = Registry.load_path_file(
+        target_dir / 'info_files.txt',
+        missing=missing_info.files,
+        buildroot_mapping=buildroot_mapping,
+    )
+    defaults = Defaults.for_defaults(defaults_dir / 'config.yml', defaults_dir / f'config-{target}.yml')
+    systems_metadata = registry.get_systems_metadata(defaults)
+
+    return {
+        system_name: target_system_report
+        for system_name, system_data in es_systems_data.items()
+        if (
+            target_system_report := _generate_target_system_report(
+                target,
+                system_name,
+                system_data,
+                explanations,
+                defaults,
+                systems_metadata.get(system_name, {}),
+                all_emulators_by_system.get(system_name, {}),
+                missing_info=missing_info,
+            )
+        )
+        is not None
+    }
+
+
+def _generate_systems_report(
+    reports_data_dir: Path,
+    es_systems_yml: Path,
+    explanations_yml: Path,
+    defaults_dir: Path,
+    output_file: Path,
+    /,
+    *,
+    buildroot_mapping: tuple[Path, Path] | None = None,
+) -> None:
+    results: dict[str, dict[str, _EmulatorsResultDict]] = {}
+    explanations = safe_load_yaml(explanations_yml, '_ExplanationsDict') or {}
+    es_systems_data = load_es_systems(es_systems_yml)
+
+    # tracks, for each target, each emulator-info file referenced by a package that
+    # turns out not to actually exist on disk (e.g. a stale/orphaned package left over
+    # from a WIP rename or an unclean checkout), which target(s) referenced it - "(all)" marks
+    # the arch-independent EMULATOR_INFO_PATHS_ALL registry. Reported at the end
+    # instead of aborting the whole report over one dangling package reference.
+    missing_report = _MissingReport()
+
+    all_emulators = Registry.load_path_file(
+        reports_data_dir / 'all_info_files.txt',
+        missing=missing_report.get_target_info('(all)').files,
+        buildroot_mapping=buildroot_mapping,
+    )
+    all_emulators_by_system = all_emulators.emulators_by_system
+
+    for target_dir in reports_data_dir.iterdir():
+        if not target_dir.is_dir():
+            continue
+
+        target_systems = _generate_target_report(
+            target_dir,
+            es_systems_data,
+            explanations,
+            defaults_dir,
+            all_emulators_by_system,
+            missing_report=missing_report,
+            buildroot_mapping=buildroot_mapping,
+        )
+
+        for board in _get_boards_from_config(target_dir / '.config'):
+            results[board] = target_systems
+
+    output_file.write_text(json.dumps(results, indent=2, sort_keys=True, cls=_SortedListEncoder))
+
+    if missing_report.print_missing():
+        sys.exit(1)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('reports_data_dir', type=Path, help='Directory containing reports data directories')
+    parser.add_argument('es_systems_yml', type=Path, help='es_systems.yml definition file')
+    parser.add_argument('explanations_yml', type=Path, help='explanations.yml definition file')
+    parser.add_argument('defaults_dir', type=Path, help='Path to batocera-launch defaults directory')
+    parser.add_argument('dest', type=Path, help='Output file')
+    parser.add_argument(
+        '-m',
+        '--buildroot-mapping',
+        type=str,
+        help='Mapping of buildroot bind mount to buildroot directory, in the form <buildroot_dir>:<bind_mount>',
+        default=None,
+    )
+
+    args = parser.parse_args()
+
+    buildroot_mapping: tuple[Path, Path] | None = None
+
+    if args.buildroot_mapping:
+        if ':' not in args.buildroot_mapping:
+            parser.error('--buildroot-mapping must be in the form <buildroot_dir>:<bind_mount>')
+
+        buildroot_dir, _, bind_mount = cast('tuple[str, str, str]', args.buildroot_mapping.partition(':'))
+        buildroot_mapping = (Path(buildroot_dir).resolve(), Path(bind_mount))
+
+    _generate_systems_report(
+        args.reports_data_dir,
+        args.es_systems_yml,
+        args.explanations_yml,
+        args.defaults_dir,
+        args.dest,
+        buildroot_mapping=buildroot_mapping,
+    )
+
+
+if __name__ == '__main__':
+    main()

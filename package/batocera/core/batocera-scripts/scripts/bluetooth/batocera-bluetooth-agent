@@ -1,0 +1,723 @@
+#!/usr/bin/python
+
+from __future__ import absolute_import, print_function
+
+from optparse import OptionParser, make_option
+import dbus
+import dbus.service
+import dbus.mainloop.glib
+import bluezutils
+import time
+import os
+import sys
+import logging
+import signal
+import subprocess
+from gi.repository import GLib
+
+AGENT_INTERFACE = 'org.bluez.Agent1'
+ADAPTER_INTERFACE = 'org.bluez.Adapter1'
+DEVICE_INTERFACE = 'org.bluez.Device1'
+
+BLUETOOTH_ALIAS = "Nintendo Batocera"
+
+STATUS_FILE  = "/var/run/bt_status"
+LISTING_FILE = "/var/run/bt_listing"
+DEVICE_FILE  = "/var/run/bt_device"
+RESULT_FILE  = "/var/run/bt_result"
+
+gadapter = None
+gmainloop = None
+gdiscovering = False
+gdiscovery_wanted = False
+gdevices = {}
+glisting_mode = False
+glisting_devs = {}
+
+logging.basicConfig(filename='/var/log/bluetooth-agent.log', level=logging.DEBUG, format='%(asctime)s %(message)s')
+
+def bool2str(val, valiftrue, valiffalse):
+  if val:
+    return valiftrue
+  else:
+    return valiffalse
+
+def logging_status(msg):
+  try:
+    tmpfile = STATUS_FILE + ".tmp"
+    with open(tmpfile, "w") as file:
+      file.write(msg + "\n")
+    os.rename(tmpfile, STATUS_FILE)
+  except Exception as e:
+    logging.error("unable to update the status file: {}".format(e))
+
+def logging_result(address, result):
+  try:
+    with open(RESULT_FILE, "a") as file:
+      file.write("{} {}\n".format(result, address))
+  except Exception as e:
+    logging.error("unable to update the result file: {}".format(e))
+
+def device_matches_filter(properties, filter):
+  if filter is None:
+    return False
+  if "Address" not in properties:
+    return False
+  if filter == prop2str(properties["Address"]):
+    return True
+  return filter == "input" and "Icon" in properties and prop2str(properties["Icon"]).startswith("input")
+
+def connect_device(path, properties, forceConnect, filter):
+  #
+  if filter is None and not forceConnect:
+    logging.info("skipping {}. No filter.".format(path))
+    return
+
+  address = None
+  if "Address" in properties:
+    address = prop2str(properties["Address"])
+  if address is None:
+    logging.info("skipping {}. No Address property.".format(path))
+    return
+
+  # avoid devices without interesting information
+  if "Trusted" not in properties:
+    logging.info("skipping {}. No Trusted property.".format(address))
+    return
+  if "Connected" not in properties:
+    logging.info("skipping {}. No Connected property.".format(address))
+    return
+
+  trusted   = prop2str(properties["Trusted"])
+  paired    = prop2str(properties["Paired"]) if "Paired" in properties else False
+  devName = getDevName(properties)
+  shortDevName = getShortDevName(properties)
+  connected = prop2str(properties["Connected"])
+
+  # skip non input devices
+  if "Icon" not in properties:
+    logging.info("Skipping device {} (no type)".format(devName));
+    return
+
+  logging.info("filter={}, Icon={}, Address={}".format(filter, prop2str(properties["Icon"]), address))
+
+  if not forceConnect and not device_matches_filter(properties, filter):
+    logging.info("Skipping device {} (not {})".format(devName, filter));
+    return
+
+  logging.info("event for " + devName + "(paired=" + bool2str(paired, "paired", "not paired") + ", trusted=" + bool2str(trusted, "trusted", "untrusted") + ", connected=" + bool2str(connected, "connected", "disconnected") + ")")
+
+  # skipping connected devices
+  if paired and trusted and connected:
+    logging.info("Skipping already connected device {}".format(devName));
+    logging_result(address, "connected")
+    return
+  
+  if not paired:
+    if not connected and (gdiscovery_wanted or filter == address):
+      doPairing(address, devName, shortDevName)
+    return
+
+  # now it is paired
+  if not trusted and (gdiscovery_wanted or forceConnect):
+    logging.info("Trusting (" + devName + ")")
+    logging_status("Trusting " + shortDevName + "...")
+    try:
+      bluezProps = dbus.Interface(bus.get_object("org.bluez", path), "org.freedesktop.DBus.Properties")
+      bluezProps.Set(DEVICE_INTERFACE, "Trusted", True)
+    except Exception as e:
+      logging.error("unable to trust {}: {}".format(devName, e))
+
+  # now it is paired and trusted
+  # Connect if Trusted and paired
+  if not connected or forceConnect:
+    doConnect(address, devName, shortDevName)
+
+def doPairing(address, devName, shortDevName):
+  logging.info("Pairing... (" + devName + ")")
+  logging_status("Pairing " + shortDevName + "...")
+  try:
+    device = bluezutils.find_device(address)
+    device.Pair()
+  except Exception as e:
+    logging.info("Pairing failed (" + devName + "): {}".format(e))
+    logging_status("Pairing failed (" + shortDevName + ")")
+    logging_result(address, "failed")
+
+def doConnect(address, devName, shortDevName):
+  # discovery stopped during connection to help some devices
+  resume_discovery = gdiscovering
+  if resume_discovery:
+    stop_discovery()
+
+  try:
+    device = bluezutils.find_device(address)
+    ntry=5
+    while ntry > 0:
+      ntry = ntry -1
+      try:
+        logging.info("Connecting... (" + devName + ")")
+        logging_status("Connecting " + shortDevName + "...")
+        device.Connect()
+        logging.info("Connected successfully (" + devName + ")")
+        logging_status("Connected successfully (" + shortDevName + ")")
+        logging_result(address, "connected")
+        return
+      except dbus.exceptions.DBusException as err:
+        logging.info("dbus: " + err.get_dbus_message())
+        time.sleep(1)
+      except Exception as err:
+        logging.info("Connection failed (" + devName + "): {}".format(err))
+        time.sleep(1)
+    
+    logging.info("Connection failed. Give up. (" + devName + ")")
+    logging_status("Connection failed. Give up. (" + shortDevName + ")")
+    logging_result(address, "failed")
+  except Exception as e:
+    logging.error("unable to connect {}: {}".format(devName, e))
+    logging_result(address, "failed")
+  finally:
+    if resume_discovery:
+      start_discovery()
+
+def getDevName(properties):
+  #devName = properties["Name"] + " (" + properties["Address"] + ", " + properties["Icon"] + ")"
+  #devStatus = "Trusted=" + str(properties["Trusted"]) + ", paired=" + str(properties["Paired"]) + ", connected=" + str(properties["Connected"]), ", blocked=" + str(properties["Blocked"])
+  #devTech = "legacyPairing: " + str(properties["LegacyPairing"]) # + ", RSSI: " + properties["RSSI"]
+
+  if "Name" in properties and "Address" in properties and "Icon" in properties:
+    return prop2str(properties["Name"]) + " (" + prop2str(properties["Address"]) + ", " + prop2str(properties["Icon"]) + ")"
+
+  if "Name" in properties and "Address" in properties:
+    return prop2str(properties["Name"]) + " (" + prop2str(properties["Address"]) + ")"
+
+  if "Name" in properties and "Icon" in properties:
+    return prop2str(properties["Name"]) + " (" + prop2str(properties["Icon"]) + ")"
+
+  if "Name" in properties:
+    return prop2str(properties["Name"])
+
+  if "Address" in properties and "Icon" in properties:
+    return prop2str(properties["Address"]) + " (" + prop2str(properties["Icon"]) + ")"
+
+  if "Address" in properties:
+    return prop2str(properties["Address"])
+
+  if "Icon" in properties:
+    return prop2str(properties["Icon"])
+
+  return "unknown"
+
+def prop2str(p):
+  newp = p
+  if type(newp) is dbus.String:
+    newp = newp.encode('ascii', 'replace')
+  if type(newp) is bytes:
+    newp = newp.decode('UTF-8')
+  return newp
+
+def getShortDevName(properties):
+  if "Name" in properties:
+    return prop2str(properties["Name"])
+
+  if "Address" in properties:
+    return prop2str(properties["Address"])
+
+  if "Icon" in properties:
+    return prop2str(properties["Icon"])
+
+  return "unknown"
+
+def getDevAddressNameType(properties):
+  if "Address" not in properties:
+    return None, None, None
+
+  vaddr = prop2str(properties["Address"])
+  vname = None
+  if "Name" in properties:
+    vname = prop2str(properties["Name"])
+  vtype = None
+  if "Icon" in properties:
+    vtype = prop2str(properties["Icon"])
+
+  return vaddr, vname, vtype
+
+def getBluetoothWantedAddr():
+  addrDevice = None
+  if os.path.isfile(DEVICE_FILE):
+    with open(DEVICE_FILE, "r") as file:
+      addrDevice = file.read().strip()
+      if addrDevice == "":
+        addrDevice = None
+      logging.info("bt_dev: {}".format(addrDevice))
+  return addrDevice
+
+def adapter_added(path):
+  if gadapter is not None:
+    return
+  logging.info("bluetooth adapter added: {}".format(path))
+  bind_adapter(path)
+
+def adapter_removed(path):
+  global gadapter
+  global gdiscovering
+
+  if gadapter is None or gadapter.object_path != path:
+    return
+  logging.info("bluetooth adapter removed: {}".format(path))
+  gadapter = None
+  gdiscovering = False
+
+def interfaces_added(path, interfaces):
+  global gdevices
+  global glisting_mode
+
+  if ADAPTER_INTERFACE in interfaces:
+    adapter_added(path)
+
+  if DEVICE_INTERFACE not in interfaces:
+    return
+  if not interfaces[DEVICE_INTERFACE]:
+    return
+
+  properties = interfaces[DEVICE_INTERFACE]
+
+  if path in gdevices:
+    gdevices[path] = merge2dicts(gdevices[path], properties)
+  else:
+    gdevices[path] = properties
+
+  logging.info("Interface added: {}".format(propertiesToStr(properties)))
+
+  if glisting_mode:
+    listing_dev_event(path, gdevices[path], True)
+
+  connect_device(path, gdevices[path], False, getBluetoothWantedAddr())
+
+def interfaces_removed(path, interfaces):
+  global gdevices
+
+  if ADAPTER_INTERFACE in interfaces:
+    adapter_removed(path)
+
+  # Remove from gdevices only if the Device1 interface itself is removed
+  if DEVICE_INTERFACE in interfaces and path in gdevices:
+    listing_dev_event(path, gdevices[path], False)
+    del gdevices[path]
+
+def propertiesToStr(properties):
+  str = ""
+  for p in properties:
+    if p not in ["ServiceData", "RSSI", "UUIDs", "Adapter", "AddressType", "Alias", "Bonded", "ServicesResolved"]:
+      if str != "":
+        str = str + ", "
+      str = str + "{}={}".format(p, properties[p])
+  return str
+
+def properties_changed(interface, changed, invalidated, path):
+  global gdevices
+  global glisting_mode
+
+  if interface != DEVICE_INTERFACE:
+    return
+
+  if path in gdevices:
+    gdevices[path] = merge2dicts(gdevices[path], changed)
+  else:
+    gdevices[path] = changed
+  properties = gdevices[path]
+
+  if glisting_mode:
+    listing_dev_event(path, properties, True)
+
+  propstr = propertiesToStr(changed)
+  if propstr != "":
+    logging.info("Properties changed: {}".format(propstr))
+
+  if "Connected" in changed and not changed["Connected"]:
+    logging.info("Skipping (property Connected changed to False)");
+    refresh_audio_on_disconnect(properties)
+    return
+
+  if "Connected" in changed and changed["Connected"]:
+    refresh_audio_on_connect(properties)
+
+    filter = getBluetoothWantedAddr()
+    if device_matches_filter(properties, filter):
+      logging_result(prop2str(properties["Address"]), "connected")
+
+  if "Paired" in changed and changed["Paired"]:
+    # ok, do as in simple-agent, trust and connect
+    connect_device(path, properties, True, getBluetoothWantedAddr())
+    return
+
+  if "Connected" in changed:
+    return
+
+  connect_device(path, properties, False, getBluetoothWantedAddr())
+
+def merge2dicts(d1, d2):
+  res = d1.copy()
+  res.update(d2)
+  return res
+
+def sanitizeXmlValue(value):
+  return value.replace("\"", "'").replace("<", "(").replace(">", ")").replace("\n", " ").replace("\r", " ")
+
+def write_listing_entry(devaddress, devname, devstatus, devtype):
+  try:
+    with open(LISTING_FILE, "a") as file:
+      file.write("<device id=\"{}\" name=\"{}\" status=\"{}\" type=\"{}\" />\n".format(
+                 devaddress, sanitizeXmlValue(devname), devstatus, devtype));
+  except Exception as e:
+    logging.error("unable to write the listing entry: {}".format(e))
+
+def listing_dev_event(path, properties, adding):
+  global glisting_devs
+
+  if adding and properties.get("Paired", False):
+    adding = False
+
+  if adding:
+    devaddress, devname, devtype = getDevAddressNameType(properties)
+
+    if devaddress is None:
+      return
+
+    if devname is None or devname == "":
+      devname = devaddress
+    devtype = icon2basicname(devtype)
+
+    entry = (devaddress, devname, devtype)
+    previous = glisting_devs.get(path)
+
+    if previous == entry:
+      return
+
+    if previous is not None:
+      write_listing_entry(previous[0], previous[1], "removed", previous[2])
+
+    # update list
+    glisting_devs[path] = entry
+    write_listing_entry(entry[0], entry[1], "added", entry[2])
+  else:
+    # device already removed
+    if path not in glisting_devs:
+      return
+    previous = glisting_devs.pop(path)
+    write_listing_entry(previous[0], previous[1], "removed", previous[2])
+
+def icon2basicname(str):
+  if str is None:
+    return "unknown"
+  if str == "input-gaming":
+    return "joystick"
+  if str == "input-keyboard":
+    return "keyboard"
+  if str == "input-mouse" or str == "input-tablet":
+    return "mouse"
+  if str.startswith("audio-"):
+    return "audio"
+  return "unknown"
+
+def start_discovery():
+  global gdiscovering
+  global gadapter
+
+  if gdiscovering:
+    return True
+  if gadapter is None:
+    logging.info("Start discovery skipped: no adapter")
+    return False
+
+  try:
+    logging.info("Start discovery")
+    gadapter.StartDiscovery()
+    gdiscovering = True
+    return True
+  except Exception as e:
+    logging.error("Start discovery failed: {}".format(e))
+    return False
+
+def stop_discovery():
+  global gdiscovering
+  global gadapter
+
+  if not gdiscovering:
+    return
+  gdiscovering = False
+
+  if gadapter is None:
+    return
+  try:
+    logging.info("Stop discovery")
+    gadapter.StopDiscovery()
+  except Exception as e:
+    logging.error("Stop discovery failed: {}".format(e))
+
+def user_signal_start_discovery(userdata = None):
+  global glisting_mode
+  global glisting_devs
+  global gdiscovery_wanted
+
+  wanted_listing = os.path.isfile(LISTING_FILE)
+
+  if wanted_listing and not glisting_mode:
+    glisting_mode = True
+    glisting_devs = {}
+    logging.info("listing mode enabled");
+  elif not wanted_listing and glisting_mode:
+    glisting_mode = False
+    glisting_devs = {}
+    logging.info("listing mode disabled");
+
+  if glisting_mode:
+    # initial listing with existing devices
+    for path in list(gdevices):
+      listing_dev_event(path, gdevices[path], True)
+
+  gdiscovery_wanted = True
+  start_discovery()
+
+  filter = getBluetoothWantedAddr()
+  if filter is not None and filter != "input":
+    for path in list(gdevices):
+      connect_device(path, gdevices[path], False, filter)
+
+  return True
+
+def user_signal_stop_discovery(userdata = None):
+  global glisting_mode
+  global gdiscovery_wanted
+
+  if glisting_mode:
+    logging.info("listing mode disabled");
+  glisting_mode = False
+
+  gdiscovery_wanted = False
+  stop_discovery()
+
+  return True
+
+def isAudioDevice(properties):
+  return "Icon" in properties and prop2str(properties["Icon"]).startswith("audio-")
+
+def refresh_audio_output():
+  try:
+    current_output = subprocess.check_output(["batocera-audio", "get"], encoding='utf-8').strip()
+    subprocess.run(["batocera-audio", "set", current_output])
+  except Exception as e:
+    logging.error("unable to refresh the audio output: {}".format(e))
+
+def audio_sink_poll(state):
+  state[0] = state[0] + 1
+
+  try:
+    sinks = subprocess.check_output(["pactl", "list", "short", "sinks"], encoding='utf-8')
+  except Exception as e:
+    logging.warning("unable to list the audio sinks: {}".format(e))
+    return False
+
+  if "bluez_" in sinks:
+    logging.info("Bluetooth audio sink detected: proceeding with audio refresh.")
+    refresh_audio_output()
+    return False
+
+  # Wait up to 10 seconds for a 'bluez_' to appear
+  if state[0] >= 100:
+    logging.warning("Bluetooth sink not detected within timeout.")
+    return False
+
+  return True
+
+def refresh_audio_on_connect(properties):
+  # Skip if the device is not an audio device
+  if not isAudioDevice(properties):
+    return
+
+  logging.info("Bluetooth audio device connected. Waiting for sink to appear...")
+
+  GLib.timeout_add(100, audio_sink_poll, [0])
+
+def refresh_audio_on_disconnect(properties):
+  if not isAudioDevice(properties):
+    return
+
+  refresh_audio_output()
+  logging.info("Bluetooth audio disconnected. Refreshing audio output.")
+
+class Agent(dbus.service.Object):
+  exit_on_release = True
+
+  def set_exit_on_release(self, exit_on_release):
+    self.exit_on_release = exit_on_release
+
+  @dbus.service.method(AGENT_INTERFACE, in_signature="", out_signature="")
+  def Release(self):
+    logging.info("agent: Release")
+    if self.exit_on_release and gmainloop is not None:
+      gmainloop.quit()
+  
+  @dbus.service.method(AGENT_INTERFACE, in_signature="os", out_signature="")
+  def AuthorizeService(self, device, uuid):
+    logging.info("agent: AuthorizeService")
+    return
+  
+  @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="s")
+  def RequestPinCode(self, device):
+    logging.info("RequestPinCode (%s)" % (device))
+    return "0000"
+
+  @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="u")
+  def RequestPasskey(self, device):
+    logging.info("RequestPasskey (%s)" % (device))
+    return 0
+  
+  @dbus.service.method(AGENT_INTERFACE, in_signature="ouq", out_signature="")
+  def DisplayPasskey(self, device, passkey, entered):
+    logging.info("agent: DisplayPasskey (%s, %06u entered %u)" % (device, passkey, entered))
+  
+  @dbus.service.method(AGENT_INTERFACE, in_signature="os", out_signature="")
+  def DisplayPinCode(self, device, pincode):
+    logging.info("agent: DisplayPinCode (%s, %s)" % (device, pincode))
+  
+  @dbus.service.method(AGENT_INTERFACE, in_signature="ou", out_signature="")
+  def RequestConfirmation(self, device, passkey):
+    logging.info("agent: RequestConfirmation")
+    return
+  
+  @dbus.service.method(AGENT_INTERFACE, in_signature="o", out_signature="")
+  def RequestAuthorization(self, device):
+    logging.info("agent: RequestAuthorization")
+    return
+  
+  @dbus.service.method(AGENT_INTERFACE, in_signature="", out_signature="")
+  def Cancel(self):
+    logging.info("agent: Cancel")
+
+def bind_adapter(path):
+  global gadapter
+  global gdiscovering
+
+  gadapter = dbus.Interface(bus.get_object("org.bluez", path), ADAPTER_INTERFACE)
+  gdiscovering = False
+  logging.info("using bluetooth adapter {}".format(path))
+
+  # power on adapter if needed
+  try:
+    adapterProps = dbus.Interface(bus.get_object("org.bluez", path), "org.freedesktop.DBus.Properties")
+    if not adapterProps.Get(ADAPTER_INTERFACE, "Powered"):
+      logging.info("powering on adapter ({})".format(path))
+      adapterProps.Set(ADAPTER_INTERFACE, "Powered", True)
+    adapterProps.Set(ADAPTER_INTERFACE, "Pairable", True)
+
+    if prop2str(adapterProps.Get(ADAPTER_INTERFACE, "Alias")) != BLUETOOTH_ALIAS:
+      logging.info("setting the adapter alias to '{}'".format(BLUETOOTH_ALIAS))
+      adapterProps.Set(ADAPTER_INTERFACE, "Alias", BLUETOOTH_ALIAS)
+  except Exception as e:
+    logging.error("unable to power on the adapter {}: {}".format(path, e))
+
+  if gdiscovery_wanted:
+    start_discovery()
+
+def find_adapter_path(dev_id):
+  om = dbus.Interface(bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
+  objects = om.GetManagedObjects()
+
+  adapters = []
+  for path, interfaces in objects.items():
+    if ADAPTER_INTERFACE in interfaces:
+      adapters.append((path, interfaces[ADAPTER_INTERFACE]))
+
+  if dev_id:
+    for path, properties in adapters:
+      if prop2str(properties.get("Address", "")) == dev_id or path.endswith(dev_id):
+        return path
+
+  if adapters:
+    return adapters[0][0]
+
+  return None
+
+def load_known_devices():
+  om = dbus.Interface(bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
+  objects = om.GetManagedObjects()
+  for path, interfaces in objects.items():
+    if DEVICE_INTERFACE in interfaces:
+      gdevices[path] = interfaces[DEVICE_INTERFACE]
+
+def register_agent():
+  agentpath = "/batocera/agent"
+  obj = bus.get_object("org.bluez", "/org/bluez")
+  manager = dbus.Interface(obj, "org.bluez.AgentManager1")
+  manager.RegisterAgent(agentpath, "NoInputNoOutput")
+  manager.RequestDefaultAgent(agentpath)
+  return Agent(bus, agentpath)
+
+def do_main_loop(dev_id):
+  global gmainloop
+
+  # adapter
+  adapter_path = None
+  for ntry in range(60):
+    try:
+      adapter_path = find_adapter_path(dev_id)
+      if adapter_path is not None:
+        break
+    except Exception as e:
+      logging.info("unable to list the bluetooth adapters ({})".format(e))
+    logging.info("no bluetooth adapter yet, waiting...")
+    time.sleep(1)
+
+  if adapter_path is None:
+    raise Exception("Bluetooth adapter not found")
+  logging.info("adapter found")
+
+  load_known_devices()
+  bind_adapter(adapter_path)
+
+  # events
+  # use events while i manage to stop discovery only from the process having started it
+  GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, user_signal_start_discovery, None)
+  GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR2, user_signal_stop_discovery, None)
+  logging.info("signals set")
+  
+  gmainloop = GLib.MainLoop()
+  gmainloop.run()
+
+if __name__ == '__main__':
+  # options
+  option_list = [ make_option("-i", "--device", action="store", type="string", dest="dev_id") ]
+  parser = OptionParser(option_list=option_list)
+  (options, args) = parser.parse_args()
+
+  # register dbus
+  dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+  bus = dbus.SystemBus()
+
+  bus.add_signal_receiver(interfaces_added,   dbus_interface = "org.freedesktop.DBus.ObjectManager", signal_name = "InterfacesAdded")
+  bus.add_signal_receiver(interfaces_removed, dbus_interface = "org.freedesktop.DBus.ObjectManager", signal_name = "InterfacesRemoved")
+  bus.add_signal_receiver(properties_changed, dbus_interface = "org.freedesktop.DBus.Properties",    signal_name = "PropertiesChanged", arg0 = DEVICE_INTERFACE, path_keyword = "path")
+
+  # register the agent
+  agent = None
+  for ntry in range(60):
+    try:
+      agent = register_agent()
+      break
+    except Exception as e:
+      logging.info("agent registration failed ({}), retrying...".format(e))
+      time.sleep(1)
+
+  if agent is None:
+    logging.error("unable to register the agent on bluetoothd")
+    sys.exit(1)
+  logging.info("agent registered")
+
+  try:
+    do_main_loop(options.dev_id)
+  except Exception as e:
+    logging.error("agent fails")
+    logging.error(e, exc_info=True)
+    raise
+  logging.error("agent gave up")

@@ -1,0 +1,195 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: controlcenter\n"
+"POT-Creation-Date: \n"
+"PO-Revision-Date: \n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: gl\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 3.9\n"
+
+msgid "10 sec"
+msgstr "10 seg"
+
+msgid "2 sec"
+msgstr "2 seg"
+
+msgid "5 sec"
+msgstr "5 seg"
+
+msgid "AC"
+msgstr "CA"
+
+msgid "Audio Output"
+msgstr ""
+
+msgid "Audio Profile"
+msgstr ""
+
+msgid "Audio Source"
+msgstr "Fonte de audio"
+
+msgid "Balanced"
+msgstr "Equilibrado"
+
+msgid "Batocera"
+msgstr "Batocera"
+
+msgid "Battery"
+msgstr "Batería"
+
+msgid "Bright +"
+msgstr "Brillo +"
+
+msgid "Bright -"
+msgstr "Brillo -"
+
+msgid "CPU Temp:"
+msgstr "Temp UCP:"
+
+msgid "CPU:"
+msgstr "CPU:"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Close"
+msgstr "Pechar"
+
+msgid "Confirm"
+msgstr "Confirmar"
+
+msgid "Default"
+msgstr "Predeterminado"
+
+msgid "Free data storage:"
+msgstr "Almacenamento de datos libre:"
+
+msgid "Game"
+msgstr "Xogo"
+
+msgid "Gun"
+msgstr "Pistola"
+
+msgid "High (60fps)"
+msgstr "Alta (60 fps)"
+
+msgid "High Perf"
+msgstr "Alto rendemento"
+
+msgid "Immediately (with Control Center)"
+msgstr "Inmediatamente (co Centro de Control)"
+
+msgid "Kill it!"
+msgstr "Finalizar!"
+
+msgid "Low (30fps)"
+msgstr "Baixa (30 fps)"
+
+msgid "Manual"
+msgstr "Manual"
+
+msgid "Map"
+msgstr "Mapa"
+
+msgid "Microphone"
+msgstr "Micrófono"
+
+msgid "Mid (30fps)"
+msgstr "Media (30 fps)"
+
+msgid "Mute Sound"
+msgstr "Acalar"
+
+msgid "Network IP address:"
+msgstr "Enderezo IP da rede:"
+
+msgid "Next"
+msgstr "Seguinte"
+
+msgid "No Audio"
+msgstr "Sen audio"
+
+msgid "OFF"
+msgstr "APAGADO"
+
+msgid "ON"
+msgstr "ACESO"
+
+msgid "Plane Mode"
+msgstr "Modo Avión"
+
+msgid "Power Mode"
+msgstr "Modo de Enerxía"
+
+msgid "Previous"
+msgstr "Anterior"
+
+msgid "Quality"
+msgstr "Calidade"
+
+msgid "Quick Access"
+msgstr "Acceso rápido"
+
+msgid "Quit game"
+msgstr "Saír do xogo"
+
+msgid "Record"
+msgstr "Gravar"
+
+msgid "Record All Screens"
+msgstr "Gravar todas as pantallas"
+
+msgid "Recording in progress"
+msgstr "Gravación en curso"
+
+msgid "Resolution:"
+msgstr "Resolución:"
+
+msgid "Saver"
+msgstr "Protector de pantalla"
+
+msgid "Screenshot"
+msgstr "Captura de pantalla"
+
+msgid "Select"
+msgstr "Seleccionar"
+
+msgid "Stuck emulator?"
+msgstr "Emulador bloqueado?"
+
+msgid "System"
+msgstr "Sistema"
+
+msgid "System (Default)"
+msgstr "Sistema (predeterminado)"
+
+msgid "Take screenshot"
+msgstr "Facer captura de pantalla"
+
+msgid "Toggle"
+msgstr "Activar/Desactivar"
+
+msgid "Touch keyboard"
+msgstr "Teclado táctil"
+
+msgid "Ultra (60fps)"
+msgstr "Ultra (60 fps)"
+
+msgid "Vol +"
+msgstr "Vol +"
+
+msgid "Vol -"
+msgstr "Vol -"
+
+#~ msgid "Temp:"
+#~ msgstr "Temp:"
+
+#~ msgid "Sound & Power"
+#~ msgstr "Son e enerxía"
+
+#~ msgid "RetroAchievements"
+#~ msgstr "retrologros"

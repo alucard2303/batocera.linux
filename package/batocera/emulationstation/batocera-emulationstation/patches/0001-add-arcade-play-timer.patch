@@ -1,0 +1,730 @@
+diff --git a/es-app/CMakeLists.txt b/es-app/CMakeLists.txt
+index caaf9c6..666d70c 100644
+--- a/es-app/CMakeLists.txt
++++ b/es-app/CMakeLists.txt
+@@ -86,6 +86,8 @@ set(ES_HEADERS
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiBezelInstaller.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiNetPlay.h # batocera
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiNetPlaySettings.h
++    ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiCoinWait.h # batocera play timer
++    ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiPlayTimerSettings.h # batocera play timer
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiRetroAchievements.h
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiRetroAchievementsSettings.h	
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiSystemInformation.h
+@@ -191,6 +193,8 @@ set(ES_SOURCES
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiBezelInstaller.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiNetPlay.cpp # batocera
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiNetPlaySettings.cpp
++    ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiCoinWait.cpp # batocera play timer
++    ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiPlayTimerSettings.cpp # batocera play timer
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiRetroAchievements.cpp
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiRetroAchievementsSettings.cpp
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiSystemInformation.cpp	
+diff --git a/es-app/src/FileData.cpp b/es-app/src/FileData.cpp
+index fc08ad4..e7b49bc 100644
+--- a/es-app/src/FileData.cpp
++++ b/es-app/src/FileData.cpp
+@@ -17,6 +17,7 @@
+ #include "views/UIModeController.h"
+ #include <assert.h>
+ #include "SystemConf.h"
++#include "TimerManager.h"
+ #include "InputManager.h"
+ #include "scrapers/ThreadedScraper.h"
+ #include "Gamelist.h" 
+@@ -791,6 +792,10 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
+ 
+ 	window->reactivateGui();
+ 
++	// Play timer: let the player know the game was closed because the time ran out
++	if (TimerManager::getInstance()->consumeTimeoutMarker())
++		window->displayNotificationMessage(_("TIME UP - INSERT A COIN TO CONTINUE PLAYING"));
++
+ 	if (system != nullptr && system->getTheme() != nullptr)
+ 		AudioManager::getInstance()->changePlaylist(system->getTheme(), true);
+ 	else
+diff --git a/es-app/src/guis/GuiCoinWait.cpp b/es-app/src/guis/GuiCoinWait.cpp
+new file mode 100644
+index 0000000..040c78b
+--- /dev/null
++++ b/es-app/src/guis/GuiCoinWait.cpp
+@@ -0,0 +1,81 @@
++#include "guis/GuiCoinWait.h"
++
++#include "components/TextComponent.h"
++#include "resources/Font.h"
++#include "renderers/Renderer.h"
++#include "TimerManager.h"
++#include "LocaleES.h"
++
++GuiCoinWait::GuiCoinWait(Window* window, const std::function<void()>& onReady)
++	: GuiComponent(window), mOnReady(onReady), mPollTimer(0)
++{
++	float width = Renderer::getScreenWidth();
++	float height = Renderer::getScreenHeight();
++
++	setSize(width, height);
++
++	mMessage = std::make_shared<TextComponent>(mWindow, _("INSERT COIN TO PLAY"), Font::get(FONT_SIZE_LARGE), 0xFFFFFFFF, ALIGN_CENTER);
++	mMessage->setSize(width, 0);
++	mMessage->setPosition(0, height * 0.42f);
++
++	mSubMessage = std::make_shared<TextComponent>(
++		mWindow,
++		_("PRESS THE CONFIGURED COIN KEY OR INSERT A COIN"), Font::get(FONT_SIZE_SMALL), 0xCCCCCCFF, ALIGN_CENTER);
++	mSubMessage->setSize(width, 0);
++	mSubMessage->setPosition(0, height * 0.42f + Font::get(FONT_SIZE_LARGE)->getLetterHeight() * 2.0f);
++}
++
++void GuiCoinWait::closeAndRun(const std::function<void()>& func)
++{
++	auto funcCopy = func;
++	delete this;
++
++	if (funcCopy)
++		funcCopy();
++}
++
++bool GuiCoinWait::input(InputConfig* config, Input input)
++{
++	if (input.value != 0 && config->isMappedTo(BUTTON_BACK, input))
++	{
++		closeAndRun(nullptr);
++		return true;
++	}
++
++	return true; // swallow everything else while waiting for a coin
++}
++
++void GuiCoinWait::update(int deltaTime)
++{
++	GuiComponent::update(deltaTime);
++
++	mPollTimer -= deltaTime;
++	if (mPollTimer > 0)
++		return;
++
++	mPollTimer = 200;
++
++	if (TimerManager::getInstance()->isEnabled() && TimerManager::getInstance()->remainingSeconds() > 0)
++	{
++		auto func = mOnReady;
++		closeAndRun(func);
++	}
++}
++
++void GuiCoinWait::render(const Transform4x4f& parentTrans)
++{
++	Transform4x4f trans = getTransform() * parentTrans;
++	Renderer::setMatrix(trans);
++
++	Renderer::drawRect(0.0f, 0.0f, Renderer::getScreenWidth(), Renderer::getScreenHeight(), 0x000000E0, 0x000000E0);
++
++	mMessage->render(trans);
++	mSubMessage->render(trans);
++}
++
++std::vector<HelpPrompt> GuiCoinWait::getHelpPrompts()
++{
++	std::vector<HelpPrompt> prompts;
++	prompts.push_back(HelpPrompt(BUTTON_BACK, _("CANCEL")));
++	return prompts;
++}
+diff --git a/es-app/src/guis/GuiCoinWait.h b/es-app/src/guis/GuiCoinWait.h
+new file mode 100644
+index 0000000..22789b2
+--- /dev/null
++++ b/es-app/src/guis/GuiCoinWait.h
+@@ -0,0 +1,37 @@
++#pragma once
++#ifndef ES_APP_GUIS_GUI_COIN_WAIT_H
++#define ES_APP_GUIS_GUI_COIN_WAIT_H
++
++#include "GuiComponent.h"
++#include "HelpPrompt.h"
++
++#include <functional>
++#include <memory>
++#include <vector>
++
++class TextComponent;
++
++// Fullscreen "insert coin" screen shown when trying to launch a game without any
++// play time left. It polls the play timer and, as soon as a coin adds time,
++// closes itself and runs the stored callback (which relaunches the game).
++class GuiCoinWait : public GuiComponent
++{
++public:
++	GuiCoinWait(Window* window, const std::function<void()>& onReady);
++
++	bool input(InputConfig* config, Input input) override;
++	void update(int deltaTime) override;
++	void render(const Transform4x4f& parentTrans) override;
++	std::vector<HelpPrompt> getHelpPrompts() override;
++	std::string getValue() const override { return "GuiCoinWait"; }
++
++private:
++	void closeAndRun(const std::function<void()>& func);
++
++	std::shared_ptr<TextComponent> mMessage;
++	std::shared_ptr<TextComponent> mSubMessage;
++	std::function<void()> mOnReady;
++	int mPollTimer;
++};
++
++#endif // ES_APP_GUIS_GUI_COIN_WAIT_H
+diff --git a/es-app/src/guis/GuiMenu.cpp b/es-app/src/guis/GuiMenu.cpp
+index 71d3c24..8b6c365 100644
+--- a/es-app/src/guis/GuiMenu.cpp
++++ b/es-app/src/guis/GuiMenu.cpp
+@@ -17,6 +17,7 @@
+ #include "guis/GuiGamelistOptions.h"
+ #include "guis/GuiImageViewer.h"
+ #include "guis/GuiNetPlaySettings.h"
++#include "guis/GuiPlayTimerSettings.h"
+ #include "guis/GuiRetroAchievementsSettings.h"
+ #include "guis/GuiSystemInformation.h"
+ #include "guis/GuiControllersSettings.h"
+@@ -211,6 +212,7 @@ GuiMenu::GuiMenu(Window *window, bool animate) : GuiComponent(window), mMenu(win
+ 			addEntry(_("UPDATES & DOWNLOADS"), true, [this] { openUpdatesSettings(); }, "iconUpdates");
+ 
+ 		addEntry(_("SYSTEM SETTINGS").c_str(), true, [this] { openSystemSettings(); }, "iconSystem");
++		addEntry(_("PLAY TIMER").c_str(), true, [this] { openPlayTimerSettings(); }, "iconSystem");
+ 	}
+ 	else
+ 	{
+@@ -248,6 +250,11 @@ void GuiMenu::openScraperSettings()
+ 	mWindow->pushGui(new GuiScraperStart(mWindow));
+ }
+ 
++void GuiMenu::openPlayTimerSettings()
++{
++	mWindow->pushGui(new GuiPlayTimerSettings(mWindow));
++}
++
+ void GuiMenu::openConfigInput()
+ {
+ 	Window* window = mWindow;
+diff --git a/es-app/src/guis/GuiMenu.h b/es-app/src/guis/GuiMenu.h
+index 65df4ef..6fb6dde 100644
+--- a/es-app/src/guis/GuiMenu.h
++++ b/es-app/src/guis/GuiMenu.h
+@@ -63,6 +63,7 @@ private:
+         void openNetplaySettings(); 
+         void openRetroachievementsSettings();
+         void openMissingBiosSettings();
++        void openPlayTimerSettings();
+         void openFormatDriveSettings();
+         void exitKidMode();
+ 
+diff --git a/es-app/src/guis/GuiPlayTimerSettings.cpp b/es-app/src/guis/GuiPlayTimerSettings.cpp
+new file mode 100644
+index 0000000..fe2e51c
+--- /dev/null
++++ b/es-app/src/guis/GuiPlayTimerSettings.cpp
+@@ -0,0 +1,92 @@
++#include "guis/GuiPlayTimerSettings.h"
++
++#include <algorithm>
++#include <cstdlib>
++
++#include "components/SliderComponent.h"
++#include "components/SwitchComponent.h"
++#include "components/TextComponent.h"
++#include "resources/Font.h"
++#include "SystemConf.h"
++#include "TimerManager.h"
++#include "LocaleES.h"
++#include "Window.h"
++
++GuiPlayTimerSettings::GuiPlayTimerSettings(Window* window) : GuiSettings(window, _("PLAY TIMER SETTINGS").c_str())
++{
++	auto* timer = TimerManager::getInstance();
++
++	addGroup(_("PLAY TIMER"));
++
++	// Master switch (the state file is ensured below, after timer.initial is saved)
++	addSwitch(
++		_("ENABLE PLAY TIMER"),
++		_("Time is only consumed while a game is running and is shown as HH:MM:SS in the menus"),
++		"timer.enabled", false);
++
++	// Minutes of play time added by each coin
++	auto coinMinutes = std::make_shared<SliderComponent>(mWindow, 1.f, 60.f, 1.f, "min");
++	coinMinutes->setValue((float)timer->addMinutesPerCoin());
++	addWithLabel(_("MINUTES PER COIN"), coinMinutes);
++	addSaveFunc([coinMinutes]
++	{
++		SystemConf::getInstance()->set("timer.add.minutes", std::to_string((int)coinMinutes->getValue()));
++	});
++
++	// Warning time before the game is closed when the time runs out
++	auto warnSeconds = std::make_shared<SliderComponent>(mWindow, 0.f, 120.f, 5.f, "s");
++	warnSeconds->setValue((float)timer->warnSeconds());
++	addWithLabel(_("CLOSING GRACE PERIOD"), warnSeconds);
++	addSaveFunc([warnSeconds]
++	{
++		SystemConf::getInstance()->set("timer.warn", std::to_string((int)warnSeconds->getValue()));
++	});
++
++	// Time loaded when the timer is enabled / reset
++	auto initialMinutes = std::make_shared<SliderComponent>(mWindow, 0.f, 240.f, 5.f, "min");
++	initialMinutes->setValue((float)std::max(0, atoi(SystemConf::getInstance()->get("timer.initial").c_str())));
++	addWithLabel(_("TIME WHEN ENABLED / RESET"), initialMinutes);
++	addSaveFunc([initialMinutes]
++	{
++		SystemConf::getInstance()->set("timer.initial", std::to_string((int)initialMinutes->getValue()));
++	});
++
++	// Create the state file once everything (including timer.initial) is persisted
++	addSaveFunc([timer]
++	{
++		if (SystemConf::getInstance()->getBool("timer.enabled"))
++			timer->ensureStateFile();
++	});
++
++	addGroup(_("COIN ACCEPTOR"));
++
++	addInputTextConfigRow(_("COIN KEY (SDL NAME)"), "timer.coin.key", false, false);
++	addEntry(_("DEFAULT: 5 - THE COIN SWITCH IS USUALLY WIRED TO A KEYBOARD ENCODER"), false);
++
++	addInputTextConfigRow(_("COIN DEVICE (NAME PART)"), "timer.coin.device", false, false);
++	addEntry(_("OPTIONAL: WATCH A DEDICATED INPUT DEVICE WHILE GAMES RUN, E.G. 'COIN'"), false);
++
++	addGroup(_("ACTIONS"));
++
++	// Current remaining time (read-only snapshot at open)
++	auto timeLeftText = std::make_shared<TextComponent>(mWindow, timer->remainingFormatted(), Font::get(FONT_SIZE_MEDIUM), 0xFFFFFFFF);
++	addWithLabel(_("TIME LEFT"), timeLeftText);
++
++	addEntry(_("SIMULATE A COIN"), true, [this, timer]
++	{
++		int minutes = timer->insertCoin();
++		if (minutes > 0)
++			mWindow->displayNotificationMessage("+ " + std::to_string(minutes) + " " + _("MIN"));
++	});
++
++	addEntry(_("RESET TIME"), true, [this, timer]
++	{
++		timer->resetState();
++		mWindow->displayNotificationMessage(_("TIME RESET"));
++	});
++
++	addGroup(_("INFO"));
++
++	addEntry(_("AT 00:00:00 NO GAME CAN START UNTIL A COIN ADDS TIME"), false);
++	addEntry(_("A COIN DURING THE CLOSING GRACE PERIOD EXTENDS THE RUNNING GAME"), false);
++}
+diff --git a/es-app/src/guis/GuiPlayTimerSettings.h b/es-app/src/guis/GuiPlayTimerSettings.h
+new file mode 100644
+index 0000000..7370c8a
+--- /dev/null
++++ b/es-app/src/guis/GuiPlayTimerSettings.h
+@@ -0,0 +1,13 @@
++#pragma once
++#ifndef ES_APP_GUIS_GUI_PLAY_TIMER_SETTINGS_H
++#define ES_APP_GUIS_GUI_PLAY_TIMER_SETTINGS_H
++
++#include "guis/GuiSettings.h"
++
++class GuiPlayTimerSettings : public GuiSettings
++{
++public:
++	GuiPlayTimerSettings(Window* window);
++};
++
++#endif // ES_APP_GUIS_GUI_PLAY_TIMER_SETTINGS_H
+diff --git a/es-app/src/views/ViewController.cpp b/es-app/src/views/ViewController.cpp
+index 59153c8..31c986d 100644
+--- a/es-app/src/views/ViewController.cpp
++++ b/es-app/src/views/ViewController.cpp
+@@ -20,6 +20,8 @@
+ #include "Window.h"
+ #include "guis/GuiDetectDevice.h"
+ #include "SystemConf.h"
++#include "TimerManager.h"
++#include "guis/GuiCoinWait.h"
+ #include "AudioManager.h"
+ #include "FileSorts.h"
+ #include "CollectionSystemManager.h"
+@@ -552,6 +554,13 @@ void ViewController::launch(FileData* game, LaunchGameOptions options, Vector3f
+ 		return;
+ 	}
+ 
++	// Play timer: no time left, wait for a coin before launching the game
++	if (TimerManager::getInstance()->isEnabled() && TimerManager::getInstance()->remainingSeconds() <= 0)
++	{
++		mWindow->pushGui(new GuiCoinWait(mWindow, [this, game, options, center] { launch(game, options, center, false); }));
++		return;
++	}
++
+ 	if (!SystemConf::getInstance()->getBool("global.netplay") || ApiSystem::getInstance()->getIpAddress() == "NOT CONNECTED" || !game->isNetplaySupported())
+ 		options.netPlayMode = DISABLED;
+ 	else if (options.netPlayMode == DISABLED && Settings::getInstance()->getBool("NetPlayAutomaticallyCreateLobby"))
+diff --git a/es-core/CMakeLists.txt b/es-core/CMakeLists.txt
+index fd9c8f4..91a0975 100644
+--- a/es-core/CMakeLists.txt
++++ b/es-core/CMakeLists.txt
+@@ -18,6 +18,7 @@ set(CORE_HEADERS
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/gettext.h # batocera
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/LocaleES.h # batocera
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/SystemConf.h # batocera	
++    ${CMAKE_CURRENT_SOURCE_DIR}/src/TimerManager.h # batocera play timer
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/PowerSaver.h
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/Settings.h
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/Sound.h
+@@ -226,6 +227,7 @@ set(CORE_SOURCES
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiTextEditPopup.cpp
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiTextEditPopupKeyboard.cpp # batocera
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/SystemConf.cpp # batocera
++    ${CMAKE_CURRENT_SOURCE_DIR}/src/TimerManager.cpp # batocera play timer
+ 
+ 	# Math
+ 	${CMAKE_CURRENT_SOURCE_DIR}/src/math/Misc.cpp
+diff --git a/es-core/src/TimerManager.cpp b/es-core/src/TimerManager.cpp
+new file mode 100644
+index 0000000..be29be4
+--- /dev/null
++++ b/es-core/src/TimerManager.cpp
+@@ -0,0 +1,175 @@
++#include "TimerManager.h"
++
++#include <SDL.h>
++#include <algorithm>
++#include <cctype>
++#include <cstdio>
++#include <cstdlib>
++#include <fstream>
++
++#include "SystemConf.h"
++#include "utils/FileSystemUtil.h"
++
++namespace
++{
++const char* STATE_FILE = "/userdata/system/configs/timer/timeleft";
++const char* STATE_DIR  = "/userdata/system/configs/timer";
++const char* LAST_EXIT  = "/run/batocera-timer/last_exit";
++
++std::string toLower(std::string value)
++{
++	std::transform(value.begin(), value.end(), value.begin(),
++		[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
++	return value;
++}
++
++int toInt(const std::string& value, int defaultValue)
++{
++	if (value.empty())
++		return defaultValue;
++
++	char* end = nullptr;
++	long parsed = std::strtol(value.c_str(), &end, 10);
++	if (end == nullptr || *end != '\0')
++		return defaultValue;
++
++	return (int)parsed;
++}
++} // namespace
++
++TimerManager* TimerManager::getInstance()
++{
++	static TimerManager instance;
++	return &instance;
++}
++
++bool TimerManager::isEnabled()
++{
++	return SystemConf::getInstance()->get("timer.enabled") == "1";
++}
++
++int TimerManager::addMinutesPerCoin()
++{
++	return std::max(1, toInt(SystemConf::getInstance()->get("timer.add.minutes"), 5));
++}
++
++int TimerManager::warnSeconds()
++{
++	return std::max(0, toInt(SystemConf::getInstance()->get("timer.warn"), 30));
++}
++
++std::string TimerManager::coinKeyName() const
++{
++	std::string key = SystemConf::getInstance()->get("timer.coin.key");
++	return key.empty() ? "5" : key; // classic MAME coin key
++}
++
++int TimerManager::readStateFile() const
++{
++	if (!Utils::FileSystem::exists(STATE_FILE, false))
++		return 0;
++
++	std::ifstream stream(STATE_FILE);
++	std::string content;
++	std::getline(stream, content);
++	stream.close();
++
++	return std::max(0, toInt(content, 0));
++}
++
++void TimerManager::writeStateFile(int seconds) const
++{
++	Utils::FileSystem::createDirectory(STATE_DIR);
++
++	std::string temporary = std::string(STATE_FILE) + ".tmp";
++	{
++		std::ofstream stream(temporary);
++		stream << std::max(0, seconds) << "\n";
++		stream.close();
++	}
++
++	std::rename(temporary.c_str(), STATE_FILE);
++}
++
++int TimerManager::remainingSeconds()
++{
++	time_t now = time(nullptr);
++	if (mLastRead == now)
++		return mCachedRemaining;
++
++	mLastRead = now;
++	mCachedRemaining = readStateFile();
++	return mCachedRemaining;
++}
++
++std::string TimerManager::remainingFormatted()
++{
++	int total = remainingSeconds();
++
++	char buffer[16];
++	std::snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d", total / 3600, (total / 60) % 60, total % 60);
++	return std::string(buffer);
++}
++
++bool TimerManager::coinKeyMatches(int sdlKeycode) const
++{
++	std::string configured = toLower(coinKeyName());
++	if (configured.empty())
++		return false;
++
++	const char* pressed = SDL_GetKeyName((SDL_Keycode)sdlKeycode);
++	if (pressed == nullptr || *pressed == '\0')
++		return false;
++
++	return toLower(pressed) == configured;
++}
++
++int TimerManager::insertCoin()
++{
++	if (!isEnabled())
++		return 0;
++
++	Uint32 now = SDL_GetTicks();
++	if (now - mLastCoinInsert < 300) // debounce the switch / keyboard repeat
++		return 0;
++
++	int minutes = addMinutesPerCoin();
++	if (minutes <= 0)
++		return 0;
++
++	mLastCoinInsert = now;
++	writeStateFile(remainingSeconds() + minutes * 60);
++	mCachedRemaining += minutes * 60;
++	return minutes;
++}
++
++void TimerManager::ensureStateFile()
++{
++	if (Utils::FileSystem::exists(STATE_FILE, false))
++		return;
++
++	int minutes = std::max(0, toInt(SystemConf::getInstance()->get("timer.initial"), 0));
++	writeStateFile(minutes * 60);
++	mLastRead = 0;
++}
++
++void TimerManager::resetState()
++{
++	int minutes = std::max(0, toInt(SystemConf::getInstance()->get("timer.initial"), 0));
++	writeStateFile(minutes * 60);
++	mLastRead = 0;
++}
++
++bool TimerManager::consumeTimeoutMarker()
++{
++	if (!Utils::FileSystem::exists(LAST_EXIT, false))
++		return false;
++
++	std::ifstream stream(LAST_EXIT);
++	std::string content;
++	std::getline(stream, content);
++	stream.close();
++
++	Utils::FileSystem::removeFile(LAST_EXIT);
++	return content == "timeout";
++}
+diff --git a/es-core/src/TimerManager.h b/es-core/src/TimerManager.h
+new file mode 100644
+index 0000000..3a931e4
+--- /dev/null
++++ b/es-core/src/TimerManager.h
+@@ -0,0 +1,45 @@
++#pragma once
++#ifndef ES_CORE_TIMER_MANAGER_H
++#define ES_CORE_TIMER_MANAGER_H
++
++#include <string>
++#include <ctime>
++
++// Arcade / parental play timer shared between the frontend (this process) and
++// the batocera-launch process. The authoritative state is a plain-text file
++// with the seconds of play time remaining:
++//
++//   /userdata/system/configs/timer/timeleft
++//
++// While a game runs, batocera-launch decreases it; coins inserted there extend
++// the running session. Here in the frontend we display it, block launches when
++// it reaches zero and add time when the coin input (configured key) is pressed.
++class TimerManager
++{
++public:
++	static TimerManager* getInstance();
++
++	bool isEnabled();                 // timer.enabled == "1"
++	int  addMinutesPerCoin();         // timer.add.minutes
++	int  warnSeconds();               // timer.warn
++	int  remainingSeconds();          // seconds left (cached, 1 s granularity)
++	std::string remainingFormatted(); // HH:MM:SS
++	std::string coinKeyName() const;   // timer.coin.key
++	bool coinKeyMatches(int sdlKeycode) const;
++	int  insertCoin();                // adds addMinutesPerCoin() minutes, returns minutes added (0 if debounced)
++	void ensureStateFile();           // create the state file from timer.initial if missing
++	void resetState();                // write timer.initial (used by the settings menu)
++	bool consumeTimeoutMarker();      // true if the last game ended because the time ran out
++
++private:
++	TimerManager() = default;
++
++	int  readStateFile() const;
++	void writeStateFile(int seconds) const;
++
++	time_t mLastRead = 0;
++	int    mCachedRemaining = 0;
++	unsigned int mLastCoinInsert = 0;
++};
++
++#endif // ES_CORE_TIMER_MANAGER_H
+diff --git a/es-core/src/Window.cpp b/es-core/src/Window.cpp
+index 6b10fc8..daa42af 100644
+--- a/es-core/src/Window.cpp
++++ b/es-core/src/Window.cpp
+@@ -12,6 +12,7 @@
+ #include <iomanip>
+ #include "guis/GuiInfoPopup.h"
+ #include "SystemConf.h"
++#include "TimerManager.h"
+ #include "LocaleES.h"
+ #include "AudioManager.h"
+ #include <SDL_events.h>
+@@ -34,7 +35,7 @@
+ #endif
+ 
+ Window::Window() : mNormalizeNextUpdate(false), mFrameTimeElapsed(0), mFrameCountElapsed(0), mAverageDeltaTime(10),
+-  mAllowSleep(true), mSleeping(false), mTimeSinceLastInput(0), mScreenSaver(NULL), mRenderScreenSaver(false), mClockElapsed(0), mMouseCapture(nullptr), mMenuBackgroundShaderTextureCache(-1)
++  mAllowSleep(true), mSleeping(false), mTimeSinceLastInput(0), mScreenSaver(NULL), mRenderScreenSaver(false), mClockElapsed(0), mTimerElapsed(0), mMouseCapture(nullptr), mMenuBackgroundShaderTextureCache(-1)
+ {			
+ 	mTransitionOffset = 0;
+ 
+@@ -155,6 +156,19 @@ bool Window::init(bool initRenderer, bool initInputManager)
+ 		mClock->setColor(0x777777FF);
+ 	}
+ 
++	if (mPlayTimer == nullptr)
++	{
++		mPlayTimer = std::make_shared<TextComponent>(this);
++		mPlayTimer->setFont(Font::get(FONT_SIZE_MEDIUM));
++		mPlayTimer->setHorizontalAlignment(ALIGN_RIGHT);
++		mPlayTimer->setVerticalAlignment(ALIGN_TOP);
++		mPlayTimer->setPosition(Renderer::getScreenWidth()*0.99f, Renderer::getScreenHeight()*0.01f);
++		mPlayTimer->setSize(Renderer::getScreenWidth()*0.1f, 0);
++		mPlayTimer->setColor(0xFFFFFFFF);
++		mPlayTimer->setBackgroundColor(0x000000A0);
++		mPlayTimer->setRenderBackground(true);
++	}
++
+ 	if (mControllerActivity == nullptr)
+ 		mControllerActivity = std::make_shared<ControllerActivityComponent>(this);
+ 
+@@ -259,6 +273,20 @@ void Window::input(InputConfig* config, Input input)
+ 	if (cancelScreenSaver())
+ 		return;
+ 
++	// Play timer: the configured key acts as the coin acceptor, whatever screen is shown
++	if (TimerManager::getInstance()->isEnabled() &&
++		config->getDeviceId() == DEVICE_KEYBOARD && input.value && input.type == TYPE_KEY &&
++		TimerManager::getInstance()->coinKeyMatches(input.id))
++	{
++		mTimeSinceLastInput = 0;
++
++		int minutes = TimerManager::getInstance()->insertCoin();
++		if (minutes > 0)
++			displayNotificationMessage("+ " + std::to_string(minutes) + " " + _("MIN"));
++
++		return;
++	}
++
+ 	if (config->getDeviceId() == DEVICE_KEYBOARD && input.value && input.id == SDLK_g && SDL_GetModState() & KMOD_LCTRL) // && Settings::getInstance()->getBool("Debug"))
+ 	{
+ 		// toggle debug grid with Ctrl-G
+@@ -520,6 +548,28 @@ void Window::update(int deltaTime)
+ 		}
+ 	}
+ 
++	/* draw the play timer */ 
++	mTimerElapsed -= deltaTime;
++	if (mTimerElapsed <= 0)
++	{
++		auto* playTimer = TimerManager::getInstance();
++		if (playTimer->isEnabled() && mPlayTimer != nullptr)
++		{
++			int remaining = playTimer->remainingSeconds();
++			mPlayTimer->setText(playTimer->remainingFormatted());
++
++			unsigned int color = 0xFFCC33FF; // amber while there is time
++			if (remaining > 0 && remaining <= playTimer->warnSeconds())
++				color = 0xFFE066FF; // orange: warning zone
++			if (remaining <= 0)
++				color = 0xFF3333FF; // red: time is up
++
++			mPlayTimer->setColor(color);
++		}
++
++		mTimerElapsed = 1000; // next update in 1000ms
++	}
++
+ 	mTimeSinceLastInput += deltaTime;
+ 
+ 	if (peekGui())
+@@ -749,6 +799,10 @@ void Window::render()
+ 	if (Settings::DrawClock() && mClock && (mGuiStack.size() < 2 || !Renderer::ScreenSettings::fullScreenMenus()))
+ 		mClock->render(transform);
+ 
++	// play timer overlay (arcade countdown)
++	if (mPlayTimer != nullptr && TimerManager::getInstance()->isEnabled() && (mGuiStack.size() < 2 || !Renderer::ScreenSettings::fullScreenMenus()))
++		mPlayTimer->render(transform);
++
+ 	if (Settings::ShowControllerActivity() && mControllerActivity != nullptr && (mGuiStack.size() < 2 || !Renderer::isSmallScreen()))
+ 		mControllerActivity->render(transform);
+ 
+diff --git a/es-core/src/Window.h b/es-core/src/Window.h
+index 8b8f65b..7fa46aa 100644
+--- a/es-core/src/Window.h
++++ b/es-core/src/Window.h
+@@ -162,6 +162,8 @@ private:
+ 
+ 	int mClockElapsed;
+ 	std::shared_ptr<TextComponent>	mClock;
++	int mTimerElapsed;
++	std::shared_ptr<TextComponent>	mPlayTimer;
+ 	std::shared_ptr<ControllerActivityComponent>	mControllerActivity;
+ 	std::shared_ptr<VolumeInfoComponent> mVolumeInfo;
+ 	std::shared_ptr<BatteryIndicatorComponent>	mBatteryIndicator;	

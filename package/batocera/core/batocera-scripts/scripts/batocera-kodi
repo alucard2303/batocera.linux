@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# script to be called from es to call batocera-launch + kodi
+sleep 5
+batocera-launch -system kodi -rom '' "$@"
